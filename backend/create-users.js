@@ -27,9 +27,10 @@ const users = [
 async function createUsers() {
   const connection = await mysql.createConnection({
     host: process.env.MYSQL_HOST || 'localhost',
+    port: process.env.MYSQL_PORT || 3306,
     user: process.env.MYSQL_USER || 'root',
     password: process.env.MYSQL_PASSWORD || '',
-    database: process.env.MYSQL_DATABASE || 'project-skripsi'
+    database: process.env.MYSQL_DATABASE || 'security_monitoring'
   });
 
   console.log('✅ Connected to database');

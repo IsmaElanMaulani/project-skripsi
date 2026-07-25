@@ -32,7 +32,7 @@ export default function Layout() {
 
   useEffect(() => {
     fetchNotifications();
-    const socket = io('http://localhost:5000', { transports: ['websocket'] });
+    const socket = io('http://localhost:5001', { transports: ['websocket'] });
     socket.on('notifications', (data) => {
       setAlerts(data.slice(0, 3));
       setUnread((prev) => prev + data.length);

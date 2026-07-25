@@ -13,6 +13,21 @@ const pool = mysql.createPool({
 });
 
 async function initializeDatabase() {
+  // Bootstrap: Create database if it doesn't exist using a connection without database specified
+  const dbName = process.env.MYSQL_DATABASE || 'security_monitoring';
+  try {
+    const bootstrapConn = await mysql.createConnection({
+      host: process.env.MYSQL_HOST || 'localhost',
+      port: process.env.MYSQL_PORT || 3306,
+      user: process.env.MYSQL_USER || 'root',
+      password: process.env.MYSQL_PASSWORD || '',
+    });
+    await bootstrapConn.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\``);
+    await bootstrapConn.end();
+  } catch (err) {
+    console.error('⚠️ Warning: Failed to bootstrap database creation:', err.message);
+  }
+
   const conn = await pool.getConnection();
   try {
     await conn.query(`CREATE TABLE IF NOT EXISTS users (
@@ -20,7 +35,7 @@ async function initializeDatabase() {
       username VARCHAR(100) NOT NULL UNIQUE,
       email VARCHAR(255) NOT NULL UNIQUE,
       password VARCHAR(255) NOT NULL,
-      role ENUM('admin','viewer') DEFAULT 'viewer',
+      role ENUM('admin','viewer','analyst','operator') DEFAULT 'viewer',
       is_active TINYINT(1) DEFAULT 1,
       last_login DATETIME NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -129,6 +144,46 @@ async function initializeDatabase() {
       published_at DATETIME NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )`);
+
+    await conn.query(`CREATE TABLE IF NOT EXISTS monitored_domains (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      domain VARCHAR(255) NOT NULL UNIQUE,
+      notes TEXT,
+      created_by INT,
+      status ENUM('active', 'inactive') DEFAULT 'active',
+      last_scan_at DATETIME NULL,
+      last_scan_result VARCHAR(50) NULL,
+      scan_count INT DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+    )`);
+
+    await conn.query(`CREATE TABLE IF NOT EXISTS domain_scan_history (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      domain_id INT NOT NULL,
+      scan_result VARCHAR(50) NOT NULL,
+      malicious_count INT DEFAULT 0,
+      suspicious_count INT DEFAULT 0,
+      clean_count INT DEFAULT 0,
+      scan_details JSON NULL,
+      scanned_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (domain_id) REFERENCES monitored_domains(id) ON DELETE CASCADE
+    )`);
+
+    await conn.query(`CREATE TABLE IF NOT EXISTS activity_logs (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT,
+      username VARCHAR(100),
+      action VARCHAR(255) NOT NULL,
+      description TEXT,
+      ip_address VARCHAR(45),
+      user_agent TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+      INDEX idx_user_id (user_id),
+      INDEX idx_created_at (created_at)
     )`);
 
     const defaultSettings = [
