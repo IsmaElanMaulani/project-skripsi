@@ -14,6 +14,7 @@ const SETTING_LABELS = {
   cloudflare_email: { label: 'Cloudflare Email (untuk Global API Key)', type: 'text', desc: 'Email akun Cloudflare (hanya jika pakai Global API Key)' },
   cloudflare_account_id: { label: 'Cloudflare Account ID', type: 'text', desc: 'Account ID Cloudflare Anda (WAJIB untuk multi-zone)' },
   cloudflare_zone_id: { label: 'Cloudflare Zone ID (Opsional)', type: 'text', desc: 'Tidak diperlukan - sistem auto-detect semua zones' },
+  virustotal_api_key: { label: 'VirusTotal API Key', type: 'text', desc: 'API Key untuk Malware Scanner & Domain Monitoring', secret: true },
   email_notifications_enabled: { label: 'Email Notifications', type: 'toggle', desc: 'Aktifkan notifikasi via email' },
   email_smtp_host: { label: 'SMTP Host', type: 'text', desc: 'Server SMTP (contoh: smtp.gmail.com)' },
   email_smtp_port: { label: 'SMTP Port', type: 'number', desc: 'Port SMTP (biasanya 587 atau 465)' },
@@ -223,6 +224,25 @@ export default function SettingsPage() {
                 </>
               )}
             </button>
+          </div>
+        </div>
+
+        {/* VirusTotal API Settings */}
+        <div className="cyber-card p-5 border-l-4 border-cyan-400">
+          <div className="flex items-start gap-3 mb-4 pb-3 border-b border-cyber-border">
+            <div className="flex-1">
+              <h2 className="text-sm font-medium text-gray-300 flex items-center gap-2">
+                🛡 VirusTotal API Configuration
+              </h2>
+              <p className="text-xs text-gray-500 mt-1">
+                Konfigurasi API Key VirusTotal untuk deteksi malware & monitoring reputasi domain
+              </p>
+            </div>
+          </div>
+          <div className="space-y-4">
+            {['virustotal_api_key'].map((key) => (
+              <SettingRow key={key} settingKey={key} value={settings[key]} onChange={handleChange} />
+            ))}
           </div>
         </div>
 

@@ -98,7 +98,7 @@ export default function DomainMonitoringPage() {
     setMsg(null);
 
     try {
-      const res = await api.post(`/domains/${id}/scan`, { scan_subdomains: scanSubdomains });
+      const res = await api.post(`/domains/${id}/scan`, { scan_subdomains: scanSubdomains }, { timeout: 180000 });
       setMsg({ type: 'success', text: res.data.message });
       fetchDomains();
     } catch (err) {

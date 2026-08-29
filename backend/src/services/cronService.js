@@ -28,12 +28,13 @@ async function fetchCloudflareLogs() {
     }
 
     // Build headers based on authentication method
-    const headers = email && apiToken ? {
-      'X-Auth-Email': email,
-      'X-Auth-Key': apiToken,
+    const isGlobalKey = apiToken && /^[a-f0-9]{37}$/i.test(apiToken.trim());
+    const headers = email && apiToken && isGlobalKey ? {
+      'X-Auth-Email': email.trim(),
+      'X-Auth-Key': apiToken.trim(),
       'Content-Type': 'application/json',
     } : {
-      Authorization: `Bearer ${apiToken}`,
+      Authorization: `Bearer ${apiToken ? apiToken.trim() : ''}`,
       'Content-Type': 'application/json',
     };
 
@@ -127,6 +128,9 @@ async function fetchCloudflareLogs() {
 
 async function checkPendingScans() {
   try {
+    const apiKey = (await getSetting('virustotal_api_key') || process.env.VIRUSTOTAL_API_KEY)?.trim();
+    if (!apiKey) return;
+
     const [scans] = await pool.query(
       `SELECT id, analysis_id FROM malware_scans WHERE status IN ('queued','scanning') AND analysis_id IS NOT NULL LIMIT 10`
     );
@@ -135,7 +139,7 @@ async function checkPendingScans() {
       try {
         const response = await axios.get(
           `https://www.virustotal.com/api/v3/analyses/${scan.analysis_id}`,
-          { headers: { 'x-apikey': process.env.VIRUSTOTAL_API_KEY }, timeout: 10000 }
+          { headers: { 'x-apikey': apiKey }, timeout: 10000 }
         );
 
         const attrs = response.data.data.attributes;
@@ -162,7 +166,7 @@ async function checkPendingScans() {
 
 // Daily domain scan
 async function scanMonitoredDomains() {
-  const apiKey = process.env.VIRUSTOTAL_API_KEY?.trim();
+  const apiKey = (await getSetting('virustotal_api_key') || process.env.VIRUSTOTAL_API_KEY)?.trim();
   if (!apiKey) {
     console.log('[CRON] VirusTotal API key not set, skipping domain scan');
     return;
@@ -247,13 +251,13 @@ async function scanMonitoredDomains() {
         if (result !== 'clean') {
           const severity = result === 'infected' ? 'critical' : 'danger';
           await pool.query(
-            `INSERT INTO notifications (title, message, severity, type, related_id) VALUES (?, ?, ?, ?, ?)`,
+            `INSERT INTO notifications (title, message, severity, type, data) VALUES (?, ?, ?, ?, ?)`,
             [
               `Domain Monitoring: ${result === 'infected' ? 'Terinfeksi' : 'Mencurigakan'}`,
               `Domain ${domain.domain} terdeteksi ${result === 'infected' ? 'terinfeksi' : 'mencurigakan'} (${stats.malicious || 0} malicious, ${stats.suspicious || 0} suspicious)`,
               severity,
               'domain_scan',
-              domain.id
+              JSON.stringify({ domain_id: domain.id })
             ]
           );
 

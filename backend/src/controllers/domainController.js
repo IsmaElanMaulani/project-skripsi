@@ -8,8 +8,13 @@ const { sendNotification } = require('../services/notificationService');
 
 const VT_BASE = 'https://www.virustotal.com/api/v3';
 
-function vtKey() {
-  return process.env.VIRUSTOTAL_API_KEY?.trim();
+async function vtKey() {
+  try {
+    const [rows] = await pool.query('SELECT value FROM settings WHERE key_name = ?', ['virustotal_api_key']);
+    return (rows[0]?.value || process.env.VIRUSTOTAL_API_KEY)?.trim();
+  } catch (err) {
+    return process.env.VIRUSTOTAL_API_KEY?.trim();
+  }
 }
 
 // Get subdomains from VirusTotal
@@ -195,7 +200,7 @@ async function deleteDomain(req, res) {
 async function scanDomain(req, res) {
   const { id } = req.params;
   const { scan_subdomains } = req.body;
-  const apiKey = vtKey();
+  const apiKey = await vtKey();
 
   if (!apiKey) {
     return res.status(400).json({ success: false, message: 'VIRUSTOTAL_API_KEY belum diset' });
@@ -259,51 +264,52 @@ async function scanDomain(req, res) {
       
       for (const subdomain of subdomains.slice(0, 5)) {
         try {
-          const subUrl = `https://${subdomain}`;
-          const subForm = new FormData();
-          subForm.append('url', subUrl);
-
-          const subSubmitRes = await axios.post(`${VT_BASE}/urls`, subForm, {
-            headers: { 'x-apikey': apiKey, ...subForm.getHeaders() },
-            timeout: 15000,
+          const subRes = await axios.get(`${VT_BASE}/domains/${subdomain}`, {
+            headers: { 'x-apikey': apiKey },
+            timeout: 10000,
           });
 
-          const subAnalysisId = subSubmitRes.data.data.id;
+          const subAttrs = subRes.data.data?.attributes || {};
+          const subStats = subAttrs.last_analysis_stats || {};
           
-          // Wait for subdomain result
-          let subAttrs = null;
-          const subStart = Date.now();
-          while (Date.now() - subStart < 45000) {
-            await new Promise(r => setTimeout(r, 4000));
-            const r = await axios.get(`${VT_BASE}/analyses/${subAnalysisId}`, {
-              headers: { 'x-apikey': apiKey },
-              timeout: 10000,
-            });
-            if (r.data.data.attributes.status === 'completed') {
-              subAttrs = r.data.data.attributes;
-              break;
-            }
-          }
+          let subResult = 'clean';
+          if (subStats.malicious > 0) subResult = 'infected';
+          else if (subStats.suspicious > 0) subResult = 'suspicious';
 
-          if (subAttrs) {
-            const subStats = subAttrs.stats || {};
-            let subResult = 'clean';
-            if (subStats.malicious > 0) subResult = 'infected';
-            else if (subStats.suspicious > 0) subResult = 'suspicious';
+          subdomainResults.push({
+            subdomain,
+            result: subResult,
+            stats: subStats
+          });
 
-            subdomainResults.push({
-              subdomain,
-              result: subResult,
-              stats: subStats
-            });
-          }
-
-          // Rate limiting
-          await new Promise(r => setTimeout(r, 15000));
+          // Short 100ms pause to avoid hammering local execution context
+          await new Promise(r => setTimeout(r, 100));
         } catch (e) {
           console.error(`Error scanning subdomain ${subdomain}:`, e.message);
         }
       }
+    }
+
+    // Save scan result with subdomains
+    // Determine overall result considering subdomains
+    let overallResult = result;
+    const hasInfectedSub = subdomainResults.some(s => s.result === 'infected');
+    const hasSuspiciousSub = subdomainResults.some(s => s.result === 'suspicious');
+    if (hasInfectedSub) {
+      overallResult = 'infected';
+    } else if (hasSuspiciousSub && overallResult !== 'infected') {
+      overallResult = 'suspicious';
+    }
+
+    // Sum stats for main domain and all subdomains
+    let combinedMalicious = stats.malicious || 0;
+    let combinedSuspicious = stats.suspicious || 0;
+    let combinedClean = (stats.harmless || 0) + (stats.undetected || 0);
+
+    for (const sub of subdomainResults) {
+      combinedMalicious += sub.stats.malicious || 0;
+      combinedSuspicious += sub.stats.suspicious || 0;
+      combinedClean += (sub.stats.harmless || 0) + (sub.stats.undetected || 0);
     }
 
     // Save scan result with subdomains
@@ -317,10 +323,10 @@ async function scanDomain(req, res) {
        VALUES (?, ?, ?, ?, ?, ?)`,
       [
         id,
-        result,
-        stats.malicious || 0,
-        stats.suspicious || 0,
-        (stats.harmless || 0) + (stats.undetected || 0),
+        overallResult,
+        combinedMalicious,
+        combinedSuspicious,
+        combinedClean,
         JSON.stringify(scanData)
       ]
     );
@@ -328,28 +334,28 @@ async function scanDomain(req, res) {
     // Update domain
     await pool.query(
       `UPDATE monitored_domains SET last_scan_at = NOW(), last_scan_result = ?, scan_count = scan_count + 1 WHERE id = ?`,
-      [result, id]
+      [overallResult, id]
     );
 
     // Create notification if threat detected
     const totalThreats = subdomainResults.filter(s => s.result !== 'clean').length;
-    if (result !== 'clean' || totalThreats > 0) {
-      const severity = result === 'infected' ? 'critical' : 'danger';
+    if (overallResult !== 'clean') {
+      const severity = overallResult === 'infected' ? 'critical' : 'danger';
       await pool.query(
-        `INSERT INTO notifications (title, message, severity, type, related_id) VALUES (?, ?, ?, ?, ?)`,
+        `INSERT INTO notifications (title, message, severity, type, data) VALUES (?, ?, ?, ?, ?)`,
         [
-          `Domain Monitoring: ${result === 'infected' ? 'Terinfeksi' : 'Mencurigakan'}`,
-          `Domain ${domain.domain} terdeteksi ${result === 'infected' ? 'terinfeksi' : 'mencurigakan'} (${stats.malicious || 0} malicious, ${stats.suspicious || 0} suspicious)${totalThreats > 0 ? ` + ${totalThreats} subdomain terdeteksi ancaman` : ''}`,
+          `Domain Monitoring: ${overallResult === 'infected' ? 'Terinfeksi' : 'Mencurigakan'}`,
+          `Domain ${domain.domain} terdeteksi ${overallResult === 'infected' ? 'terinfeksi' : 'mencurigakan'} (${stats.malicious || 0} malicious, ${stats.suspicious || 0} suspicious)${totalThreats > 0 ? ` + ${totalThreats} subdomain terdeteksi ancaman` : ''}`,
           severity,
           'domain_scan',
-          id
+          JSON.stringify({ domain_id: id })
         ]
       );
 
       // Send external notifications
       await sendNotification(
-        `⚠️ Domain ${result === 'infected' ? 'Terinfeksi' : 'Mencurigakan'}`,
-        `Domain: ${domain.domain}\nStatus: ${result === 'infected' ? 'TERINFEKSI' : 'MENCURIGAKAN'}\nMalicious: ${stats.malicious || 0}\nSuspicious: ${stats.suspicious || 0}${totalThreats > 0 ? `\nSubdomain terancam: ${totalThreats}` : ''}\n\nSegera periksa dashboard untuk detail lengkap.`
+        `⚠️ Domain ${overallResult === 'infected' ? 'Terinfeksi' : 'Mencurigakan'}`,
+        `Domain: ${domain.domain}\nStatus: ${overallResult === 'infected' ? 'TERINFEKSI' : 'MENCURIGAKAN'}\nMalicious: ${stats.malicious || 0}\nSuspicious: ${stats.suspicious || 0}${totalThreats > 0 ? `\nSubdomain terancam: ${totalThreats}` : ''}\n\nSegera periksa dashboard untuk detail lengkap.`
       );
     }
 
@@ -357,7 +363,7 @@ async function scanDomain(req, res) {
       success: true, 
       message: 'Scan selesai',
       result: {
-        scan_result: result,
+        scan_result: overallResult,
         stats,
         subdomains: subdomainResults
       }
@@ -781,7 +787,7 @@ function drawMiniStatBox(doc, x, y, width, label, value, color) {
 // Get WHOIS info from VirusTotal
 async function getWhoisInfo(req, res) {
   const { id } = req.params;
-  const apiKey = vtKey();
+  const apiKey = await vtKey();
 
   if (!apiKey) {
     return res.status(400).json({ success: false, message: 'VirusTotal API key tidak dikonfigurasi' });

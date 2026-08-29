@@ -20,8 +20,9 @@ async function updateSettings(req, res) {
   try {
     for (const [key, value] of Object.entries(settings)) {
       await pool.query(
-        `UPDATE settings SET value = ? WHERE key_name = ?`,
-        [String(value), key]
+        `INSERT INTO settings (key_name, value) VALUES (?, ?) 
+         ON DUPLICATE KEY UPDATE value = ?`,
+        [key, value !== null && value !== undefined ? String(value) : null, value !== null && value !== undefined ? String(value) : null]
       );
     }
     res.json({ success: true, message: 'Settings berhasil disimpan' });

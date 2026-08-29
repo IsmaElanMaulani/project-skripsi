@@ -44,12 +44,13 @@ async function testCloudflare() {
     }
 
     // Build headers based on authentication method
-    const headers = email && apiToken ? {
-      'X-Auth-Email': email,
-      'X-Auth-Key': apiToken,
+    const isGlobalKey = apiToken && /^[a-f0-9]{37}$/i.test(apiToken.trim());
+    const headers = email && apiToken && isGlobalKey ? {
+      'X-Auth-Email': email.trim(),
+      'X-Auth-Key': apiToken.trim(),
       'Content-Type': 'application/json',
     } : {
-      Authorization: `Bearer ${apiToken}`,
+      Authorization: `Bearer ${apiToken ? apiToken.trim() : ''}`,
       'Content-Type': 'application/json',
     };
 

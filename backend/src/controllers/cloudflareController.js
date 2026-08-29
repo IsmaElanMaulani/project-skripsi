@@ -18,18 +18,22 @@ async function cfHeaders() {
   const token = await getSetting('cloudflare_api_token') || process.env.CLOUDFLARE_API_TOKEN;
   const email = await getSetting('cloudflare_email') || process.env.CLOUDFLARE_EMAIL;
   
-  // If email is provided, use Global API Key authentication
-  if (email && token) {
+  // Auto-detect Global API Key vs API Token
+  // Global API Key is a 37-character hex string
+  const isGlobalKey = token && /^[a-f0-9]{37}$/i.test(token.trim());
+
+  // If email is provided and the token is a Global API Key, use X-Auth authentication
+  if (email && token && isGlobalKey) {
     return {
-      'X-Auth-Email': email,
-      'X-Auth-Key': token,
+      'X-Auth-Email': email.trim(),
+      'X-Auth-Key': token.trim(),
       'Content-Type': 'application/json',
     };
   }
   
-  // Otherwise use Bearer token authentication
+  // Otherwise, use Bearer token authentication (for Custom API Tokens)
   return {
-    Authorization: `Bearer ${token}`,
+    Authorization: `Bearer ${token ? token.trim() : ''}`,
     'Content-Type': 'application/json',
   };
 }
@@ -61,10 +65,10 @@ async function getLogs(req, res) {
 
     let cfError = null;
     let totalFetched = 0;
+    let allZones = [];
 
     try {
       // Step 1: Get all zones in the account
-      let allZones = [];
       let zonePage = 1;
       let hasMoreZones = true;
 
